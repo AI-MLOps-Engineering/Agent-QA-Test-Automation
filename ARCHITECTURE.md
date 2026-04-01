@@ -156,6 +156,7 @@ Modèles recommandés :
 
 # 🐳 3. Architecture de déploiement (Docker Expert)
 
+```text
 
 Internet
    |
@@ -181,6 +182,7 @@ Internet
 |  +-------------------------+  |
 +-------------------------------+
 
+```
 
 Reverse proxy Nginx :
 - HTTPS (Let’s Encrypt)
@@ -191,6 +193,8 @@ Reverse proxy Nginx :
 ---
 
 # 🧭 4. Diagramme de flux (Workflow complet)
+
+```text
 
 [User] uploads repo (zip)
       |
@@ -212,7 +216,7 @@ Reverse proxy Nginx :
       v
 [FastAPI] aggregates results -> Gradio UI displays: tests, logs, coverage, suggested patches, final report
 
-
+```
 
 ---
 
