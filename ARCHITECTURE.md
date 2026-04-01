@@ -1,34 +1,40 @@
 # 🧩 Architecture — Agent QA & Test Automation (Version Expert)
 
-Ce document décrit l’architecture complète du projet **Agent QA & Test Automation**, un système intelligent capable d’analyser un codebase, générer des tests, les exécuter dans un environnement isolé, analyser les erreurs et proposer des corrections.
+> Ce document décrit l’architecture complète du projet **Agent QA & Test Automation**, un système intelligent capable d’analyser un codebase, générer des tests, les exécuter dans un environnement isolé, analyser les erreurs et proposer des corrections.  
+> Cette architecture fournit un système complet, modulaire, scalable et professionnel, combinant agents spécialisés, RAG avancé, LLM orientés code, exécution sécurisée, interface Gradio moderne et déploiement Docker expert.
 
 ---
 
 # 🏛️ 1. Vue d’ensemble (High‑Level Architecture)
 
-┌──────────────────────────────┐
-│          Gradio UI            │
-│  (Dashboard utilisateur)      │
-└───────────────┬──────────────┘
-│
-▼
-┌────────────────────────────┐
-│        FastAPI Backend      │
-│  (Orchestrateur principal)  │
-└──────────────┬─────────────┘
-│
-┌──────────────────────────┼──────────────────────────┐
-▼                          ▼                          ▼
-┌────────────────┐       ┌────────────────────┐      ┌────────────────────┐
-│ Reader Agent    │       │ Test Generator     │      │ Error Analyst       │
-│ (Analyse code)  │       │ Agent (LLM + RAG)  │      │ Agent (LLM + Logs)  │
-└───────┬─────────┘       └──────────┬─────────┘      └──────────┬─────────┘
-│                              │                           │
-▼                              ▼                           ▼
-┌────────────────┐       ┌────────────────────┐      ┌────────────────────┐
-│ Vector Store   │       │ Model Server (LLM) │      │ Sandbox Executor    │
-│ (ChromaDB)     │       │ (Ollama / TGI)     │      │ (Docker isolé)      │
-└────────────────┘       └────────────────────┘      └────────────────────┘
+Le diagramme ci‑dessous est formaté en bloc de code pour s'afficher correctement sur GitHub. Il représente les composants principaux et leurs connexions.
+
+```text
++----------------------+        +---------------------------+
+|      Gradio UI       |  <---- |       Client / User       |
+| (Dashboard utilisateur)      |                           |
++----------+-----------+        +---------------------------+
+           |
+           v
++-------------------------------+
+|      FastAPI Backend          |
+|  (Orchestrateur principal)    |
++---+-------------------+-------+
+    |                   |
+    |                   |
+    v                   v
++--------+        +-------------+        +------------------+
+| Reader | <----> | Vector Store| <----> |  Model Server    |
+| Agent  |        |  (ChromaDB) |        |  (Ollama / TGI)  |
++--------+        +-------------+        +------------------+
+    |
+    v
++----------------+      +--------------------+      +------------------+
+| Test Generator | ---> | Sandbox Executor   | ---> | Error Analyst    |
+| Agent (LLM+RAG)|      | (Docker isolé)     |      | Agent (LLM+Logs) |
++----------------+      +--------------------+      +------------------+
+
+```
 
 
 ---
@@ -150,13 +156,31 @@ Modèles recommandés :
 
 # 🐳 3. Architecture de déploiement (Docker Expert)
 
-docker-compose.yml
-│
-├── api                (FastAPI)
-├── frontend           (Gradio)
-├── vectorstore        (ChromaDB)
-├── model-server       (Ollama / TGI)
-└── sandbox            (Docker isolé)
+
+Internet
+   |
+   v
++-----------------+
+|     Nginx       |  (reverse proxy, TLS, rate limiting)
++--------+--------+
+         |
+         v
++-------------------------------+
+|        Docker Host / VPS      |
+|  (compose network)            |
+|  +-------------------------+  |
+|  | api        (FastAPI)    |  |
+|  +-------------------------+  |
+|  | frontend   (Gradio)     |  |
+|  +-------------------------+  |
+|  | vectorstore (ChromaDB)  |  |
+|  +-------------------------+  |
+|  | model-server (Ollama/TGI)| |
+|  +-------------------------+  |
+|  | sandbox    (isolated)   |  |
+|  +-------------------------+  |
++-------------------------------+
+
 
 Reverse proxy Nginx :
 - HTTPS (Let’s Encrypt)
@@ -168,25 +192,25 @@ Reverse proxy Nginx :
 
 # 🧭 4. Diagramme de flux (Workflow complet)
 
-[1] User upload repo
-│
-▼
-[2] Reader Agent analyse le code
-│
-▼
-[3] Indexation RAG
-│
-▼
-[4] Test Generator crée les tests
-│
-▼
-[5] Sandbox Executor exécute les tests
-│
-▼
-[6] Error Analyst analyse les erreurs
-│
-▼
-[7] Rapport final + suggestions + patchs
+[User] uploads repo (zip)
+      |
+      v
+[FastAPI] receives repo -> triggers Reader Agent
+      |
+      v
+[Reader Agent] analyzes code, extracts structure, indexes into Vector Store (ChromaDB)
+      |
+      v
+[Test Generator Agent] (LLM + RAG) generates unit / integration / API tests
+      |
+      v
+[Sandbox Executor] runs tests in isolated Docker container, collects logs & coverage
+      |
+      v
+[Error Analyst Agent] analyzes failures, proposes fixes, generates patch diffs
+      |
+      v
+[FastAPI] aggregates results -> Gradio UI displays: tests, logs, coverage, suggested patches, final report
 
 
 
