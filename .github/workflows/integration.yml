@@ -38,17 +38,10 @@ jobs:
       - name: Create analysis in API container and export ANALYSIS_ID
         id: create_analysis
         run: |
-          # create an analysis inside the api container and print the id
-          docker compose exec api sh -c "python - <<'PY'
-import asyncio, json, sys
-from app.core.orchestrator import Orchestrator
-orch = Orchestrator.from_settings()
-async def run():
-    analysis_id, summary = await orch.analyze_repo('/app', entrypoint=None)
-    print(analysis_id)
-asyncio.run(run())
-PY" > analysis_id.txt
-          ANALYSIS_ID=$(cat analysis_id.txt)
+          echo "Creating analysis inside API container..."
+          # Run a one-liner Python inside the api service to create the analysis and print the id.
+          # Use docker compose run --rm to avoid nested heredocs and quoting issues.
+          ANALYSIS_ID=$(docker compose run --rm api python -c "import asyncio; from app.core.orchestrator import Orchestrator; orch=Orchestrator.from_settings(); aid, _ = asyncio.run(orch.analyze_repo('/app', entrypoint=None)); print(aid)")
           echo "ANALYSIS_ID=$ANALYSIS_ID" >> $GITHUB_ENV
           echo "Created analysis: $ANALYSIS_ID"
 
