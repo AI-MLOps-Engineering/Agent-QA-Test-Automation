@@ -158,14 +158,14 @@ Modèles recommandés :
 
 ```text
 
-Internet
-   |
-   v
-+-----------------+
-|     Nginx       |  (reverse proxy, TLS, rate limiting)
-+--------+--------+
-         |
-         v
+            Internet
+               |
+               v
+      +-----------------+
+      |     Nginx       |  (reverse proxy, TLS, rate limiting)
+      +--------+--------+
+               |
+               v
 +-------------------------------+
 |        Docker Host / VPS      |
 |  (compose network)            |
@@ -243,4 +243,4 @@ Cette architecture fournit un système complet, modulaire, scalable et professio
 - Interface Gradio moderne  
 - Déploiement Docker expert  
 
-Parfait pour un portfolio d’ingénieur IA / MLOps / DevOps.
+

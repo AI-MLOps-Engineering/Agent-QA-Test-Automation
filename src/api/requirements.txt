@@ -1,0 +1,9 @@
+fastapi>=0.95.0
+uvicorn[standard]>=0.22.0
+pydantic==1.10.12
+httpx>=0.24.0
+python-multipart>=0.0.6
+typing-extensions>=4.5.0
+chromadb>=0.4.0 ; extra == "chroma"  # optional, used only if you want local chromadb
+pytest>=7.0.0
+pytest-cov>=4.0.0

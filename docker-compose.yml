@@ -1,0 +1,115 @@
+﻿# docker-compose.yml
+# Clean, complete compose file for local development and testing.
+# Note: Compose V2 ignores the top-level "version" key, so it is omitted.
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: src/api/Dockerfile
+    image: agent-qa-api:latest
+    restart: unless-stopped
+    environment:
+      UPLOAD_ROOT: /data/uploads
+      ARTIFACTS_ROOT: /data/artifacts
+      VECTORSTORE_URL: "http://vectorstore:8001"
+      MODEL_SERVER_URL: "http://model:5100"
+      MODEL_DEFAULT_NAME: "code-model"
+      SANDBOX_IMAGE: "agent-qa-sandbox:latest"
+      SANDBOX_TIMEOUT: "120"
+      HOST: "0.0.0.0"
+      PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/data/uploads
+      - artifacts:/data/artifacts
+      - ./src/api:/app:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+
+  frontend:
+    build:
+      context: .
+      dockerfile: src/frontend/Dockerfile
+    image: agent-qa-frontend:latest
+    restart: unless-stopped
+    environment:
+      API_BASE: "http://api:8000"
+    ports:
+      - "7860:7860"
+    networks:
+      - internal
+    depends_on:
+      - api
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/ || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+
+  model:
+    build:
+      context: ./src/vectorstore
+      dockerfile: Dockerfile
+    image: agent-qa-model:latest
+    restart: unless-stopped
+    environment:
+      PORT: 5100
+    ports:
+      - "5100:8001"
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5100/health || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+
+  vectorstore:
+    build:
+      context: ./src/vectorstore
+      dockerfile: Dockerfile
+    image: agent-qa-vectorstore:latest
+    container_name: agent-qa-vectorstore
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    volumes:
+      - vector_data:/var/lib/chroma
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health || exit 1"]
+      interval: 20s
+      timeout: 3s
+      retries: 3
+
+  sandbox-runner:
+    build:
+      context: .
+      dockerfile: src/sandbox/runner/Dockerfile
+    image: agent-qa-sandbox:latest
+    networks:
+      - internal
+    volumes:
+      - uploads:/workspace:ro
+      - artifacts:/sandbox/artifacts:rw
+    # sandbox-runner is provided as a build target image; it is not started by default.
+    deploy:
+      replicas: 0
+
+volumes:
+  uploads:
+  artifacts:
+  vector_data:
+
+networks:
+  internal:
+    driver: bridge
+

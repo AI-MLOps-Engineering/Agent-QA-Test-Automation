@@ -1,0 +1,297 @@
+﻿# src/api/app/api/endpoints.py
+"""
+API endpoints for the Agent QA & Test Automation service.
+
+Endpoints:
+- /api/upload-repo        : Upload a repository (zip) for analysis
+- /api/analyze            : Trigger analysis of an uploaded repo
+- /api/generate-tests     : Generate tests for a given analysis context
+- /api/run-tests          : Execute generated tests in sandbox
+- /api/report/{run_id}    : Retrieve report/results for a test run
+- /api/ping               : Lightweight health/debug endpoint (defined also in main)
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import tempfile
+import uuid
+import logging
+from typing import Optional
+
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks, Request
+from pydantic import BaseModel
+def _get_orchestrator_lazy(request: Request):
+    # import local pour éviter circular import au niveau module
+    from app.main import get_orchestrator
+    return get_orchestrator(request)
+
+from app.core.orchestrator import Orchestrator
+  # dependency to fetch orchestrator instance
+
+logger = logging.getLogger("agent_qa.endpoints")
+
+router = APIRouter()
+
+
+# ---------------------------
+# Pydantic models
+# ---------------------------
+class UploadRepoResponse(BaseModel):
+    repo_id: str
+    message: str
+
+
+class AnalyzeRequest(BaseModel):
+    repo_id: str
+    entrypoint: Optional[str] = None  # optional path inside repo to focus on
+
+
+class AnalyzeResponse(BaseModel):
+    repo_id: str
+    analysis_id: str
+    summary: str
+
+
+class GenerateTestsRequest(BaseModel):
+    analysis_id: str
+    target: Optional[str] = None  # e.g., "unit", "integration", "api", "all"
+    coverage_goal: Optional[float] = 0.8
+
+
+class GenerateTestsResponse(BaseModel):
+    analysis_id: str
+    tests_id: str
+    files_generated: int
+
+
+class RunTestsRequest(BaseModel):
+    tests_id: str
+    timeout_seconds: Optional[int] = None
+
+
+class RunTestsResponse(BaseModel):
+    run_id: str
+    status: str
+
+
+class ReportResponse(BaseModel):
+    run_id: str
+    status: str
+    summary: str
+    artifacts: dict
+
+
+# ---------------------------
+# Helpers
+# ---------------------------
+UPLOAD_ROOT = os.environ.get("UPLOAD_ROOT", "/tmp/agent_qa_repos")
+
+
+def _ensure_upload_root():
+    os.makedirs(UPLOAD_ROOT, exist_ok=True)
+
+
+def _save_upload_to_disk(upload_file: UploadFile, dest_dir: str) -> None:
+    """
+    Save an UploadFile (zip) to dest_dir and extract it.
+    Assumes upload_file is a zip archive.
+    """
+    tmp_zip_path = os.path.join(dest_dir, "repo.zip")
+    with open(tmp_zip_path, "wb") as f:
+        shutil.copyfileobj(upload_file.file, f)
+    # Extract safely
+    import zipfile
+def get_orchestrator_dep():
+    """Import paresseux pour éviter circular import entre app.main et app.api.endpoints."""
+    from app.main import get_orchestrator as _get
+    return _get
+
+
+    with zipfile.ZipFile(tmp_zip_path, "r") as zf:
+        # Basic safety: prevent path traversal
+        for member in zf.namelist():
+            member_path = os.path.normpath(member)
+            if member_path.startswith(".."):
+                raise HTTPException(status_code=400, detail="Invalid archive content")
+        zf.extractall(dest_dir)
+    os.remove(tmp_zip_path)
+
+
+# ---------------------------
+# Endpoints
+# ---------------------------
+
+@router.post("/upload-repo", response_model=UploadRepoResponse, tags=["repo"])
+async def upload_repo(
+    file: UploadFile = File(...),
+    orchestrator: Orchestrator = Depends(_get_orchestrator_lazy),
+):
+    """
+    Upload a repository as a zip file. Returns a repo_id to reference the uploaded repo.
+    The file is extracted into a temporary directory under UPLOAD_ROOT.
+    """
+    _ensure_upload_root()
+    if file.content_type not in ("application/zip", "application/x-zip-compressed", "application/octet-stream"):
+        # allow octet-stream for some browsers/clients that don't set zip mime
+        logger.warning("Upload content-type: %s", file.content_type)
+    repo_id = str(uuid.uuid4())
+    dest_dir = os.path.join(UPLOAD_ROOT, repo_id)
+    os.makedirs(dest_dir, exist_ok=False)
+    try:
+        _save_upload_to_disk(file, dest_dir)
+    except Exception as e:
+        logger.exception("Failed to save uploaded repo: %s", e)
+        # cleanup
+        try:
+            shutil.rmtree(dest_dir)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=f"Failed to process uploaded archive: {e}")
+
+    # Optionally register repo in orchestrator (metadata)
+    try:
+        await orchestrator.register_repo(repo_id=repo_id, path=dest_dir)
+    except Exception:
+        # Non-fatal: log and continue
+        logger.exception("Orchestrator.register_repo failed for %s", repo_id)
+
+    return UploadRepoResponse(repo_id=repo_id, message="Repository uploaded and extracted")
+
+
+@router.post("/analyze", response_model=AnalyzeResponse, tags=["analysis"])
+async def analyze_repo(
+    payload: AnalyzeRequest,
+    orchestrator: Orchestrator = Depends(_get_orchestrator_lazy),
+):
+    """
+    Trigger analysis of an uploaded repository. Returns an analysis_id and a short summary.
+    """
+    repo_id = payload.repo_id
+    repo_path = os.path.join(UPLOAD_ROOT, repo_id)
+    if not os.path.isdir(repo_path):
+        raise HTTPException(status_code=404, detail="repo_id not found")
+
+    try:
+        analysis_id, summary = await orchestrator.analyze_repo(repo_path, entrypoint=payload.entrypoint)
+    except Exception as e:
+        logger.exception("analyze_repo failed for %s: %s", repo_id, e)
+        raise HTTPException(status_code=500, detail="Analysis failed")
+
+    return AnalyzeResponse(repo_id=repo_id, analysis_id=analysis_id, summary=summary)
+
+
+@router.post("/generate-tests", response_model=GenerateTestsResponse, tags=["tests"])
+async def generate_tests(
+    payload: GenerateTestsRequest,
+    orchestrator: Orchestrator = Depends(_get_orchestrator_lazy),
+):
+    """
+    Generate tests using the Test Generator Agent (LLM + RAG).
+    Returns a tests_id referencing the generated test bundle.
+    """
+    try:
+        tests_id, files_generated = await orchestrator.generate_tests(
+            analysis_id=payload.analysis_id,
+            target=payload.target or "all",
+            coverage_goal=float(payload.coverage_goal or 0.8),
+        )
+    except Exception as e:
+        logger.exception("generate_tests failed for analysis %s: %s", payload.analysis_id, e)
+        raise HTTPException(status_code=500, detail="Test generation failed")
+
+    return GenerateTestsResponse(analysis_id=payload.analysis_id, tests_id=tests_id, files_generated=files_generated)
+
+
+@router.post("/run-tests", response_model=RunTestsResponse, tags=["tests"])
+async def run_tests(
+    payload: RunTestsRequest,
+    background_tasks: BackgroundTasks,
+    orchestrator: Orchestrator = Depends(_get_orchestrator_lazy),
+):
+    """
+    Execute generated tests in the sandbox. Returns a run_id and initial status.
+    Execution is performed asynchronously in background to avoid long HTTP timeouts.
+    """
+    try:
+        run_id = str(uuid.uuid4())
+        # schedule background execution
+        background_tasks.add_task(_background_run_tests, orchestrator, payload.tests_id, run_id, payload.timeout_seconds)
+    except Exception as e:
+        logger.exception("Failed to schedule test run for tests_id=%s: %s", payload.tests_id, e)
+        raise HTTPException(status_code=500, detail="Failed to schedule test run")
+
+    return RunTestsResponse(run_id=run_id, status="scheduled")
+
+
+async def _background_run_tests(orchestrator: Orchestrator, tests_id: str, run_id: str, timeout_seconds: Optional[int]):
+    """
+    Background worker that runs tests and stores results via orchestrator.
+    """
+    logger.info("Background run started: run_id=%s tests_id=%s", run_id, tests_id)
+    try:
+        results = await orchestrator.run_tests(tests_id=tests_id, run_id=run_id, timeout_seconds=timeout_seconds)
+        # orchestrator.run_tests should persist results and artifacts
+        logger.info("Background run finished: run_id=%s status=%s", run_id, results.get("status"))
+    except Exception as e:
+        logger.exception("Background run failed: run_id=%s error=%s", run_id, e)
+        # store failure state in orchestrator if possible
+        try:
+            await orchestrator.store_run_failure(run_id=run_id, error=str(e))
+        except Exception:
+            logger.exception("Failed to persist run failure for run_id=%s", run_id)
+
+
+@router.get("/report/{run_id}", response_model=ReportResponse, tags=["reports"])
+async def get_report(run_id: str, orchestrator: Orchestrator = Depends(_get_orchestrator_lazy)):
+    """
+    Retrieve the report and artifacts for a completed run.
+    """
+    try:
+        report = await orchestrator.get_run_report(run_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="run_id not found")
+    except Exception as e:
+        logger.exception("get_report failed for run_id=%s: %s", run_id, e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve report")
+
+    # report expected to be a dict with keys: status, summary, artifacts (dict of artifact_name -> path)
+    artifacts = report.get("artifacts", {})
+    # For safety, do not automatically stream large artifacts here; provide metadata and endpoints to download if needed.
+    return ReportResponse(run_id=run_id, status=report.get("status", "unknown"), summary=report.get("summary", ""), artifacts=artifacts)
+
+
+@router.get("/report/{run_id}/artifact/{artifact_name}", tags=["reports"])
+async def download_artifact(run_id: str, artifact_name: str, orchestrator: Orchestrator = Depends(_get_orchestrator_lazy)):
+    """
+    Download a specific artifact (e.g., junit xml, coverage report) for a run.
+    """
+    try:
+        artifact_path = await orchestrator.get_run_artifact_path(run_id, artifact_name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="artifact not found")
+    except Exception as e:
+        logger.exception("get_run_artifact_path failed for run_id=%s artifact=%s: %s", run_id, artifact_name, e)
+        raise HTTPException(status_code=500, detail="Failed to retrieve artifact")
+
+    if not os.path.isfile(artifact_path):
+        raise HTTPException(status_code=404, detail="artifact file missing")
+
+    return FileResponse(path=artifact_path, filename=os.path.basename(artifact_path), media_type="application/octet-stream")
+
+
+# Lightweight debug endpoint (kept for convenience)
+@router.get("/ping", tags=["debug"])
+async def ping_endpoint(orchestrator: Orchestrator = Depends(_get_orchestrator_lazy)):
+    try:
+        ok = True
+        if hasattr(orchestrator, "health_check"):
+            ok = await orchestrator.health_check()
+        return JSONResponse({"status": "ok" if ok else "unhealthy"})
+    except Exception:
+        logger.exception("Ping failed")
+        return JSONResponse({"status": "error"}, status_code=500)
+
+
+

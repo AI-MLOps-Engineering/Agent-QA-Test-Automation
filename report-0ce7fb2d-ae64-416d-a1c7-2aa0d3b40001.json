@@ -1,0 +1,8 @@
+﻿{
+    "run_id":  "0ce7fb2d-ae64-416d-a1c7-2aa0d3b40001",
+    "status":  "completed",
+    "summary":  "{\n  \"passed\": 0,\n  \"failed\": 0,\n  \"duration_seconds\": 0.1\n}",
+    "artifacts":  {
+                      "results.json":  "/data/artifacts/runs/0ce7fb2d-ae64-416d-a1c7-2aa0d3b40001/results.json"
+                  }
+}

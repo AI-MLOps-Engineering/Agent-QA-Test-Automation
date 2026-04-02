@@ -1,0 +1,33 @@
+﻿# src/sandbox/runner/Dockerfile
+FROM python:3.11-slim
+
+LABEL org.opencontainers.image.title="agent-qa-sandbox"
+WORKDIR /sandbox
+
+ENV PYTHONUNBUFFERED=1 \
+    SANDBOX_TIMEOUT=120
+
+# Install system deps and pytest/coverage
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates procps coreutils \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install python test tools
+RUN pip install --no-cache-dir pytest pytest-cov
+
+# Copy entrypoint and runner scripts
+COPY src/sandbox/runner/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY src/sandbox/runner/run_tests.sh /usr/local/bin/run_tests.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/run_tests.sh
+
+# The container expects the host to mount:
+# - /workspace (read-only) containing repo and tests
+# - /sandbox/artifacts (rw) for results
+VOLUME ["/workspace", "/sandbox/artifacts"]
+
+# Minimal healthcheck: check that python and pytest exist
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD python -c "import sys; sys.exit(0 if __import__('shutil').which('pytest') else 1)"
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+

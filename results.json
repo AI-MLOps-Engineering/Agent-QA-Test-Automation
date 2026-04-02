@@ -1,0 +1,16 @@
+{
+  "run_id": "0ce7fb2d-ae64-416d-a1c7-2aa0d3b40001",
+  "tests_id": "fe21bfdd-90ae-4cb4-a34c-2e222c3acf8c",
+  "status": "completed",
+  "summary": {
+    "passed": 0,
+    "failed": 0,
+    "duration_seconds": 0.1
+  },
+  "artifacts": {
+    "junit": null,
+    "coverage": null,
+    "logs": null
+  },
+  "raw": {}
+}
