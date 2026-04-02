@@ -1,4 +1,3 @@
-# .github/workflows/integration.yml
 name: Integration Test
 
 on:
@@ -13,14 +12,13 @@ jobs:
     services:
       docker:
         image: docker:24-dind
-        privileged: true
         options: >-
           --privileged
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Compose
+      - name: Install docker compose plugin
         run: |
           sudo apt-get update
           sudo apt-get install -y docker-compose-plugin
@@ -28,7 +26,6 @@ jobs:
       - name: Build and start services
         run: |
           docker compose up -d --build
-          # wait for API to be healthy (simple loop)
           for i in $(seq 1 30); do
             if curl -sSf http://localhost:8000/health >/dev/null 2>&1; then
               echo "API healthy"
@@ -38,43 +35,62 @@ jobs:
             sleep 2
           done
 
-      - name: Run integration script
+      - name: Create analysis in API container and export ANALYSIS_ID
+        id: create_analysis
+        run: |
+          # create an analysis inside the api container and print the id
+          docker compose exec api sh -c "python - <<'PY'
+import asyncio, json, sys
+from app.core.orchestrator import Orchestrator
+orch = Orchestrator.from_settings()
+async def run():
+    analysis_id, summary = await orch.analyze_repo('/app', entrypoint=None)
+    print(analysis_id)
+asyncio.run(run())
+PY" > analysis_id.txt
+          ANALYSIS_ID=$(cat analysis_id.txt)
+          echo "ANALYSIS_ID=$ANALYSIS_ID" >> $GITHUB_ENV
+          echo "Created analysis: $ANALYSIS_ID"
+
+      - name: Run integration script (bash fallback)
         env:
           API_BASE: "http://localhost:8000"
+          ANALYSIS_ID: ${{ env.ANALYSIS_ID }}
         run: |
-          # Use PowerShell Core if available, otherwise use curl + jq to mimic the script
-          if command -v pwsh >/dev/null 2>&1; then
-            pwsh -NoProfile -Command "./ci/e2e-integration.ps1 -analysisId '350f1934-3b29-4567-a8db-5e1daacb732a'"
-          else
-            # fallback: minimal bash flow (generate-tests -> run-tests -> validate)
-            ANALYSIS_ID="350f1934-3b29-4567-a8db-5e1daacb732a"
-            PAYLOAD=$(jq -n --arg a "$ANALYSIS_ID" '{analysis_id:$a, target:"all", coverage_goal:0.8}')
-            RESP=$(curl -sS -X POST -H "Content-Type: application/json" -d "$PAYLOAD" http://localhost:8000/api/generate-tests)
-            echo "$RESP" | jq .
-            TESTS_ID=$(echo "$RESP" | jq -r .tests_id)
-            if [ -z "$TESTS_ID" ] || [ "$TESTS_ID" = "null" ]; then
-              echo "generate-tests failed"; exit 1
-            fi
-            PAYLOAD_RUN=$(jq -n --arg t "$TESTS_ID" '{tests_id:$t, timeout_seconds:600}')
-            RUN_RESP=$(curl -sS -X POST -H "Content-Type: application/json" -d "$PAYLOAD_RUN" http://localhost:8000/api/run-tests)
-            echo "$RUN_RESP" | jq .
-            RUN_ID=$(echo "$RUN_RESP" | jq -r .run_id)
-            # poll for results
-            for i in $(seq 1 60); do
-              if curl -sS http://localhost:8000/api/report/$RUN_ID | jq -e . >/dev/null 2>&1; then
-                echo "Run finished"
-                break
-              fi
-              sleep 2
-            done
+          set -euo pipefail
+          echo "Using ANALYSIS_ID=$ANALYSIS_ID"
+          PAYLOAD=$(jq -n --arg a "$ANALYSIS_ID" '{analysis_id:$a, target:"all", coverage_goal:0.8}')
+          RESP=$(curl -sS -X POST -H "Content-Type: application/json" -d "$PAYLOAD" http://localhost:8000/api/generate-tests)
+          echo "$RESP" | jq .
+          TESTS_ID=$(echo "$RESP" | jq -r .tests_id)
+          if [ -z "$TESTS_ID" ] || [ "$TESTS_ID" = "null" ]; then
+            echo "generate-tests failed"; exit 1
           fi
+          PAYLOAD_RUN=$(jq -n --arg t "$TESTS_ID" '{tests_id:$t, timeout_seconds:600}')
+          RUN_RESP=$(curl -sS -X POST -H "Content-Type: application/json" -d "$PAYLOAD_RUN" http://localhost:8000/api/run-tests)
+          echo "$RUN_RESP" | jq .
+          RUN_ID=$(echo "$RUN_RESP" | jq -r .run_id)
+          for i in $(seq 1 60); do
+            REPORT=$(curl -sS http://localhost:8000/api/report/$RUN_ID || true)
+            if echo "$REPORT" | jq -e . >/dev/null 2>&1; then
+              echo "Run finished"
+              echo "$REPORT" | jq .
+              break
+            fi
+            sleep 2
+          done
 
-      - name: Collect logs on failure
+      - name: Collect API logs on failure
         if: failure()
         run: |
           docker compose logs --no-color --tail 200 > api_logs.txt
-          echo "Logs saved to api_logs.txt"
-          cat api_logs.txt
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-logs
+          path: api_logs.txt
 
       - name: Tear down
         if: always()
