@@ -18,10 +18,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install docker compose plugin
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y docker-compose-plugin
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Docker CLI (includes compose)
+        uses: docker/setup-docker@v4
+        with:
+          docker-ce-version: "24.0.0" # optionnel, adapte si besoin
 
       - name: Build and start services
         run: |
