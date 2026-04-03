@@ -40,18 +40,22 @@ services:
     image: agent-qa-frontend:latest
     restart: unless-stopped
     environment:
-      API_BASE: "http://api:8000"
+      - API_BASE=http://api:8000
     ports:
       - "7860:7860"
     networks:
       - internal
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    #volumes:
+    #  - ./src/frontend:/app   # utile en dev; retire en prod
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7860/ || exit 1"]
-      interval: 20s
-      timeout: 3s
-      retries: 3
+      test: ["CMD-SHELL", "curl -f http://localhost:7860/ || exit 1"]
+      start_period: 30s
+      interval: 10s
+      timeout: 10s
+      retries: 10
 
   model:
     build:

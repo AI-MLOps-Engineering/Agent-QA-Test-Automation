@@ -1,24 +1,25 @@
 ﻿# src/frontend/Dockerfile
 FROM python:3.11-slim
 
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PIP_NO_CACHE_DIR=1
 WORKDIR /app
 
-ENV PYTHONUNBUFFERED=1
-
-# Install system deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl ca-certificates \
+# dépendances système minimales (ffmpeg utile pour Gradio)
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates ffmpeg gcc curl netcat-openbsd \
   && rm -rf /var/lib/apt/lists/*
 
-COPY src/frontend/requirements.txt ./requirements.txt
-RUN pip install --upgrade pip && pip install -r requirements.txt
+# installer dépendances Python
+COPY src/frontend/requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip setuptools wheel \
+  && pip install --no-cache-dir -r /app/requirements.txt
 
-COPY src/frontend ./frontend
+# copier l'app
+COPY src/frontend/ /app/
 
+ENV API_BASE=http://api:8000
 EXPOSE 7860
 
-# Healthcheck: simple HTTP check to Gradio root (may be proxied)
-HEALTHCHECK --interval=20s --timeout=3s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:7860/ || exit 1
-
-CMD ["python", "frontend/gradio_app.py"]
+# lancer Gradio (assure server_name 0.0.0.0)
+CMD ["python", "gradio_app.py"]
