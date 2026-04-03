@@ -6,7 +6,7 @@ Plateforme d’analyse automatisée de dépôts GitHub, combinant LLM, vectorisa
 
 ---
 
-## 🚀 Architecture du projet
+## 🏗️ Architecture du projet
 
 Le projet est structuré en **4 services principaux**, orchestrés via **Docker Compose** :
 
@@ -19,7 +19,20 @@ Le projet est structuré en **4 services principaux**, orchestrés via **Docker 
 
 Chaque service est isolé dans son propre conteneur et communique via un réseau interne Docker.
 
+Une pipeline en script shell, **ci/e2e-integration.ps1** permet d'enchainer les 4 services en une fois.
+Pareillement, une pipeline CI/CD **.github/workflows/ci.yml** via Github Actions permet l'enchainement de ces 4 services.
+
 ---
+
+## 🛠️ Stack technique
+
+| Composant | Technologie |
+|---|---|
+| API serving | FastAPI |
+| Containerisation | Docker |
+| CI/CD | GitHub Actions |
+| Web | Gradio |
+
 
 ## 📁 Structure du projet
 
